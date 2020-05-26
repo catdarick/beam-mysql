@@ -1,10 +1,10 @@
-#resolver: lts-9.0
-#resolver: lts-10.3
-# resolver: lts-13.6
-resolver: lts-14.4
+---
+resolver: lts-15.13
 extra-deps:
-  - ../beam/beam-core
-
+  - git: https://github.com/tathougies/beam 
+    commit: ebbb8da05f0a4814aa741ffb2f5cbf6e57d73c29
+    subdirs:
+      - beam-core
 # Problem: MacOS build failure
 # >   Configuring mysql-0.1.7...
 # >   setup: Missing dependencies on foreign libraries:
