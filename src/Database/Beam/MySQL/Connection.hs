@@ -26,6 +26,7 @@ import Control.Exception
     throwIO,
   )
 import Control.Monad (forM_, when)
+import Control.Monad.Fail (MonadFail, fail)
 import Control.Monad.Free.Church (runF)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (ReaderT (ReaderT), runReaderT)
@@ -161,6 +162,7 @@ import Network.URI
     uriUserInfo,
   )
 import Text.Read (readMaybe)
+import Prelude hiding (fail)
 
 data MySQL = MySQL
 
