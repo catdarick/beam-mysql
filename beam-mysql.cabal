@@ -1,6 +1,6 @@
 cabal-version:      2.2
 name:               beam-mysql
-version:            0.3.0.0
+version:            0.3.1.0
 synopsis:           Connection layer between beam and MySQL/MariaDB
 description:
   Beam driver for MySQL or MariaDB databases, two popular open-source databases.
