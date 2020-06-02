@@ -26,8 +26,7 @@ import Control.Exception
     displayException,
     throwIO,
   )
-import Control.Monad (forM_, when)
-import Control.Monad.Fail (MonadFail, fail)
+import Control.Monad (MonadFail (fail), forM_, when)
 import Control.Monad.Free.Church (runF)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (ReaderT (ReaderT), runReaderT)
