@@ -316,7 +316,7 @@ parseHMSU ::
   (Num a, Num b, Num c, Num d) =>
   Parser (a, b, c, d)
 parseHMSU = do
-  hour <- lengthedDecimal 3
+  hour <- lengthedDecimal 2
   _ <- char ':'
   minute <- lengthedDecimal 2
   _ <- char ':'
@@ -346,6 +346,7 @@ timeP = do
         )
     Just tod -> pure tod
 
+-- TODO: check how are hours parsed (was <- lenghedDecimal 3 in the original repo)
 durationP :: Parser NominalDiffTime
 durationP = do
   negative <- (True <$ char '-') <|> pure False
