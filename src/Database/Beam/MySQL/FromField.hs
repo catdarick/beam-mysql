@@ -181,9 +181,9 @@ instance (FromField a) => FromField (Maybe a) where
     _         -> Just <$> fromField t v
 
 instance FromField SqlNull where
-  fromField _ = \case
+  fromField v = \case
     MySQLNull -> pure SqlNull
-    _         -> Left . ColumnErrorInternal $ "Unexpected non-NULL"
+    _         -> Left . ColumnErrorInternal $ "Unexpected non-NULL, but got " <> show v
 
 instance FromField ByteString where
   fromField t = \case
