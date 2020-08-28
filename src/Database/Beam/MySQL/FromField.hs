@@ -1,304 +1,344 @@
-{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-module Database.Beam.MySQL.FromField (FromField (..)) where
+module Database.Beam.MySQL.FromField
+(
+  DecodeErrorTag (..),
+  MySQLFieldDecode,
+  FromField (..)
+) where
 
-import           Data.Aeson (Value, eitherDecodeStrict')
-import           Data.Bits (finiteBitSize, zeroBits)
+import           Control.Exception.Safe (Exception, MonadThrow, throw)
+import           Control.Monad.Reader (MonadReader (ask), ReaderT)
+import           Data.Aeson (Value, eitherDecodeStrict)
+import           Data.Bits (Bits (zeroBits))
 import           Data.ByteString (ByteString)
+import           Data.HashSet (HashSet)
 import           Data.Int (Int16, Int32, Int64, Int8)
+import           Data.IntCast (intCastMaybe)
+import           Data.Kind (Type)
 import           Data.Scientific (Scientific, toBoundedInteger)
-import           Data.Text (Text)
+import           Data.Text (Text, pack)
 import           Data.Text.Encoding (encodeUtf8)
-import           Data.Time.Calendar (Day)
-import           Data.Time.Clock (NominalDiffTime)
-import           Data.Time.LocalTime (LocalTime (..), TimeOfDay,
-                                      daysAndTimeOfDayToTime, midnight)
+import           Data.Time (Day, LocalTime (LocalTime), NominalDiffTime,
+                            daysAndTimeOfDayToTime, midnight)
 import           Data.Word (Word16, Word32, Word64, Word8)
-import           Database.Beam.Backend.SQL (SqlNull (..))
-import           Database.Beam.Backend.SQL.Row (ColumnParseError (..))
-import           Database.MySQL.Protocol.ColumnDef (FieldType, mySQLTypeBit,
-                                                    mySQLTypeBlob,
-                                                    mySQLTypeDate,
-                                                    mySQLTypeDateTime,
-                                                    mySQLTypeDateTime2,
-                                                    mySQLTypeDecimal,
-                                                    mySQLTypeDouble,
-                                                    mySQLTypeEnum,
-                                                    mySQLTypeFloat,
-                                                    mySQLTypeInt24,
-                                                    mySQLTypeLong,
-                                                    mySQLTypeLongBlob,
-                                                    mySQLTypeLongLong,
-                                                    mySQLTypeMediumBlob,
-                                                    mySQLTypeNewDate,
-                                                    mySQLTypeNewDecimal,
-                                                    mySQLTypeNull, mySQLTypeSet,
-                                                    mySQLTypeShort,
-                                                    mySQLTypeString,
-                                                    mySQLTypeTime,
-                                                    mySQLTypeTime2,
-                                                    mySQLTypeTimestamp,
-                                                    mySQLTypeTimestamp2,
-                                                    mySQLTypeTiny,
-                                                    mySQLTypeTinyBlob,
-                                                    mySQLTypeVarChar,
-                                                    mySQLTypeVarString,
-                                                    mySQLTypeYear)
+import           Database.Beam.Backend (SqlNull (SqlNull))
+import           Database.MySQL.Protocol.ColumnDef (FieldType)
 import           Database.MySQL.Protocol.MySQLValue (MySQLValue (..))
-import           Fmt ((+|), (|+))
 
-class FromField a where
-  fromField :: FieldType -> MySQLValue -> Either ColumnParseError a
+data DecodeErrorTag =
+  UnexpectedNull |
+  TypeMismatch |
+  ValueWon'tFit |
+  JSONParseFailed {-# UNPACK #-} !Text
+  deriving stock (Eq, Show)
+
+instance Exception DecodeErrorTag
+
+-- TODO: Reduce unnecessary stuff from ReaderT. - Koz
+newtype MySQLFieldDecode (m :: Type -> Type) (a :: Type) =
+  MySQLFieldDecode (ReaderT (HashSet Text, FieldType, MySQLValue) m a)
+  deriving newtype (Functor,
+                    Applicative,
+                    Monad,
+                    MonadReader (HashSet Text, FieldType, MySQLValue),
+                    MonadThrow)
+
+class FromField (a :: Type) where
+  fromField :: (MonadThrow m) => MySQLFieldDecode m a
 
 instance FromField Bool where
-  fromField t = \case
-    MySQLInt8 v  -> pure (zeroBits /= v)
-    MySQLInt8U v -> pure (zeroBits /= v)
-    MySQLBit v   -> pure (zeroBits /= v)
-    v             -> throwTypeMismatch "Bool" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'  -> pure (zeroBits /= v')
+      MySQLInt8U v' -> pure (zeroBits /= v')
+      MySQLBit v'   -> pure (zeroBits /= v')
+      MySQLNull     -> throw UnexpectedNull
+      _             -> throw TypeMismatch
 
 instance FromField Int8 where
-  fromField t = \case
-    MySQLInt8 v    -> pure v
-    MySQLDecimal v -> tryPackDecimal "Int8" v
-    v               -> throwTypeMismatch "Int8" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Int16 where
-  fromField t = \case
-    MySQLInt8 v    -> pure . fromIntegral $ v
-    MySQLInt16 v   -> pure v
-    MySQLDecimal v -> tryPackDecimal "Int16" v
-    v               -> throwTypeMismatch "Int16" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure . fromIntegral $ v'
+      MySQLInt16 v'  -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Int32 where
-  fromField t = \case
-    MySQLInt8 v    -> pure . fromIntegral $ v
-    MySQLInt16 v   -> pure . fromIntegral $ v
-    MySQLInt32 v   -> pure v
-    MySQLDecimal v -> tryPackDecimal "Int32" v
-    v               -> throwTypeMismatch "Int32" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure . fromIntegral $ v'
+      MySQLInt16 v'  -> pure . fromIntegral $ v'
+      MySQLInt32 v'  -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Int64 where
-  fromField t = \case
-    MySQLInt8 v    -> pure . fromIntegral $ v
-    MySQLInt16 v   -> pure . fromIntegral $ v
-    MySQLInt32 v   -> pure . fromIntegral $ v
-    MySQLInt64 v   -> pure v
-    MySQLDecimal v -> tryPackDecimal "Int64" v
-    v               -> throwTypeMismatch "Int64" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure . fromIntegral $ v'
+      MySQLInt16 v'  -> pure . fromIntegral $ v'
+      MySQLInt32 v'  -> pure . fromIntegral $ v'
+      MySQLInt64 v'  -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Int where
-  fromField t = \case
-    MySQLInt8 v -> pure . fromIntegral $ v
-    MySQLInt16 v -> pure . fromIntegral $ v
-    MySQLInt32 v -> pure . fromIntegral $ v
-    MySQLInt64 v ->
-      if finiteBitSize (zeroBits :: Int) == 64
-        then pure . fromIntegral $ v
-        else throwTypeMismatch "Int" t (MySQLInt64 v)
-    MySQLDecimal v -> tryPackDecimal "Int" v
-    v -> throwTypeMismatch "Int" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure . fromIntegral $ v'
+      MySQLInt16 v'  -> pure . fromIntegral $ v'
+      MySQLInt32 _   -> tryPack packIntLike
+      MySQLInt64 _   -> tryPack packIntLike
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Word8 where
-  fromField t = \case
-    MySQLInt8U v   -> pure v
-    MySQLDecimal v -> tryPackDecimal "Word8" v
-    v               -> throwTypeMismatch "Word8" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8U v'  -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Word16 where
-  fromField t = \case
-    MySQLInt8U v   -> pure . fromIntegral $ v
-    MySQLInt16U v  -> pure v
-    MySQLDecimal v -> tryPackDecimal "Word16" v
-    v               -> throwTypeMismatch "Word16" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8U v'  -> pure . fromIntegral $ v'
+      MySQLInt16U v' -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Word32 where
-  fromField t = \case
-    MySQLInt8U v   -> pure . fromIntegral $ v
-    MySQLInt16U v  -> pure . fromIntegral $ v
-    MySQLInt32U v  -> pure v
-    MySQLDecimal v -> tryPackDecimal "Word32" v
-    v               -> throwTypeMismatch "Word32" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8U v'  -> pure . fromIntegral $ v'
+      MySQLInt16U v' -> pure . fromIntegral $ v'
+      MySQLInt32U v' -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Word64 where
-  fromField t = \case
-    MySQLInt8U v  -> pure . fromIntegral $ v
-    MySQLInt16U v  -> pure . fromIntegral $ v
-    MySQLInt32U v  -> pure . fromIntegral $ v
-    MySQLInt64U v  -> pure v
-    MySQLDecimal v -> tryPackDecimal "Word64" v
-    v               -> throwTypeMismatch "Word64" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8U v'  -> pure . fromIntegral $ v'
+      MySQLInt16U v' -> pure . fromIntegral $ v'
+      MySQLInt32U v' -> pure . fromIntegral $ v'
+      MySQLInt64U v' -> pure v'
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Word where
-  fromField t = \case
-    MySQLInt8U v -> pure . fromIntegral $ v
-    MySQLInt16U v -> pure . fromIntegral $ v
-    MySQLInt32U v -> pure . fromIntegral $ v
-    MySQLInt64U v ->
-      if finiteBitSize (zeroBits :: Word) == 64
-      then pure . fromIntegral $ v
-      else throwTypeMismatch "Word" t (MySQLInt64U v)
-    v -> throwTypeMismatch "Word" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8U v'  -> pure . fromIntegral $ v'
+      MySQLInt16U v' -> pure . fromIntegral $ v'
+      MySQLInt32U _  -> tryPack packUIntLike
+      MySQLInt64U _  -> tryPack packUIntLike
+      MySQLDecimal _ -> tryPack packDecimal
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Float where
-  fromField t = \case
-    MySQLFloat v -> pure v
-    v             -> throwTypeMismatch "Float" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLFloat v' -> pure v'
+      MySQLNull     -> throw UnexpectedNull
+      _             -> throw TypeMismatch
 
 instance FromField Double where
-  fromField t = \case
-    MySQLFloat v  -> pure . realToFrac $ v
-    MySQLDouble v -> pure v
-    v              -> throwTypeMismatch "Double" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLFloat v'  -> pure . realToFrac $ v'
+      MySQLDouble v' -> pure v'
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Scientific where
-  fromField t = \case
-    MySQLDecimal v -> pure v
-    MySQLInt8 v    -> pure . fromIntegral $ v
-    MySQLInt8U v   -> pure . fromIntegral $ v
-    MySQLInt16 v   -> pure . fromIntegral $ v
-    MySQLInt16U v  -> pure . fromIntegral $ v
-    MySQLInt32 v   -> pure . fromIntegral $ v
-    MySQLInt32U v  -> pure . fromIntegral $ v
-    MySQLInt64 v   -> pure . fromIntegral $ v
-    MySQLInt64U v  -> pure . fromIntegral $ v
-    v               -> throwTypeMismatch "Scientific" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'    -> pure . fromIntegral $ v'
+      MySQLInt8U v'   -> pure . fromIntegral $ v'
+      MySQLInt16 v'   -> pure . fromIntegral $ v'
+      MySQLInt16U v'  -> pure . fromIntegral $ v'
+      MySQLInt32 v'   -> pure . fromIntegral $ v'
+      MySQLInt32U v'  -> pure . fromIntegral $ v'
+      MySQLInt64 v'   -> pure . fromIntegral $ v'
+      MySQLInt64U v'  -> pure . fromIntegral $ v'
+      MySQLDecimal v' -> pure v'
+      MySQLNull       -> throw UnexpectedNull
+      _               -> throw TypeMismatch
 
 instance FromField Rational where
-  fromField t = \case
-    MySQLInt8 v   -> pure . fromIntegral $ v
-    MySQLInt8U v  -> pure . fromIntegral $ v
-    MySQLInt16 v  -> pure . fromIntegral $ v
-    MySQLInt16U v -> pure . fromIntegral $ v
-    MySQLInt32 v  -> pure . fromIntegral $ v
-    MySQLInt32U v -> pure . fromIntegral $ v
-    MySQLInt64 v  -> pure . fromIntegral $ v
-    MySQLInt64U v -> pure . fromIntegral $ v
-    v              -> throwTypeMismatch "Rational" t v
-
-instance (FromField a) => FromField (Maybe a) where
-  fromField t v = case v of
-    MySQLNull -> pure Nothing
-    _         -> Just <$> fromField t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLInt8 v'   -> pure . fromIntegral $ v'
+      MySQLInt8U v'  -> pure . fromIntegral $ v'
+      MySQLInt16 v'  -> pure . fromIntegral $ v'
+      MySQLInt16U v' -> pure . fromIntegral $ v'
+      MySQLInt32 v'  -> pure . fromIntegral $ v'
+      MySQLInt32U v' -> pure . fromIntegral $ v'
+      MySQLInt64 v'  -> pure . fromIntegral $ v'
+      MySQLInt64U v' -> pure . fromIntegral $ v'
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField SqlNull where
-  fromField t v = case v of
-    MySQLNull -> pure SqlNull
-    _         -> Left errorMsg
-    where
-      errorMsg :: ColumnParseError
-      errorMsg = ColumnTypeMismatch "Present value" "NULL" msg
-      msg :: String
-      msg = "Unexpected actual value of type" <>
-            fieldTypeToString t <>
-            " with value " <>
-            show v
-
-instance FromField ByteString where
-  fromField t = \case
-    MySQLText v  -> pure . encodeUtf8 $ v
-    MySQLBytes v -> pure v
-    v             -> throwTypeMismatch "ByteString" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLNull -> pure SqlNull
+      _         -> throw TypeMismatch
 
 instance FromField Text where
-  fromField t = \case
-    MySQLText v -> pure v
-    MySQLBytes v ->
-      Left . ColumnTypeMismatch "Text" (fieldTypeToString t) . bytesErr $ v
-    v            -> throwTypeMismatch "Text" t v
-    where
-      bytesErr :: ByteString -> String
-      bytesErr v = "Tried to read bytes as text: " +|
-                   show v |+
-                   ""
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLText v' -> pure v'
+      MySQLNull    -> throw UnexpectedNull
+      _            -> throw TypeMismatch
+
+instance FromField ByteString where
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLText v'  -> pure . encodeUtf8 $ v'
+      MySQLBytes v' -> pure v'
+      MySQLNull     -> throw UnexpectedNull
+      _             -> throw TypeMismatch
 
 instance FromField LocalTime where
-  fromField t = \case
-    MySQLDateTime v  -> pure v
-    MySQLTimeStamp v -> pure v
-    MySQLDate v      -> pure (LocalTime v midnight)
-    v                 -> throwTypeMismatch "LocalTime" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLDateTime v'  -> pure v'
+      MySQLTimeStamp v' -> pure v'
+      MySQLDate v'      -> pure . LocalTime v' $ midnight
+      MySQLNull         -> throw UnexpectedNull
+      _                 -> throw TypeMismatch
 
 instance FromField Day where
-  fromField t = \case
-    MySQLDate v -> pure v
-    v            -> throwTypeMismatch "Day" t v
-
-instance FromField TimeOfDay where
-  fromField t = \case
-    MySQLTime s v ->
-      if s == zeroBits
-        then pure v
-        else throwTypeMismatch "TimeOfDay" t (MySQLTime s v)
-    v -> throwTypeMismatch "TimeOfDay" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLDate v' -> pure v'
+      MySQLNull    -> throw UnexpectedNull
+      _            -> throw TypeMismatch
 
 instance FromField NominalDiffTime where
-  fromField t = \case
-    MySQLTime s v -> do
-      let isPositive = s == zeroBits
-      let ndt = daysAndTimeOfDayToTime 0 v
-      if isPositive
-        then pure ndt
-        else pure . negate $ ndt
-    v -> throwTypeMismatch "NominalDiffTime" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLTime s v' -> do
+        let isPositive = s == zeroBits
+        let ndt = daysAndTimeOfDayToTime 0 v'
+        pure $ if isPositive then ndt else negate ndt
+      MySQLNull      -> throw UnexpectedNull
+      _              -> throw TypeMismatch
 
 instance FromField Value where
-  fromField t = \case
-    MySQLText v  -> case eitherDecodeStrict' . encodeUtf8 $ v of
-      Left err  -> Left . ColumnErrorInternal $ "JSON parsing failed: " <> err
-      Right val -> pure val
-    MySQLBytes v -> case eitherDecodeStrict' v of
-      Left err  -> Left . ColumnErrorInternal $ "JSON parsing failed: " <> err
-      Right val -> pure val
-    v             -> throwTypeMismatch "Aeson.Value" t v
+  {-# INLINABLE fromField #-}
+  fromField = do
+    (_, _, v) <- ask
+    case v of
+      MySQLText _  -> tryParseJSON extractJSON
+      MySQLBytes _ -> tryParseJSON extractJSON
+      MySQLNull    -> throw UnexpectedNull
+      _            -> throw TypeMismatch
 
 -- Helpers
 
-tryPackDecimal :: (Integral a, Bounded a) =>
-  String -> Scientific -> Either ColumnParseError a
-tryPackDecimal typeName = maybe throwDecimalWon'tFit pure . toBoundedInteger
-  where
-    throwDecimalWon'tFit =
-      Left . ColumnErrorInternal $ typeName <> " cannot store this DECIMAL"
+-- Packers
 
-throwTypeMismatch ::
-  String -> FieldType -> MySQLValue -> Either ColumnParseError a
-throwTypeMismatch typeName ft v =
-  Left . ColumnTypeMismatch typeName (fieldTypeToString ft) $ value
-  where
-    value :: String
-    value = "Value found: " +| show v |+ ""
+packDecimal :: (Integral a, Bounded a) => MySQLValue -> Maybe a
+packDecimal = \case
+  MySQLDecimal v -> toBoundedInteger v
+  _ -> Nothing
 
--- Stringification of type names
-fieldTypeToString :: FieldType -> String
-fieldTypeToString ft = "MySQL " <>
-  if | ft == mySQLTypeDecimal -> "Decimal"
-     | ft == mySQLTypeTiny -> "Tiny"
-     | ft == mySQLTypeShort -> "Short"
-     | ft == mySQLTypeLong -> "Long"
-     | ft == mySQLTypeFloat -> "Float"
-     | ft == mySQLTypeDouble -> "Double"
-     | ft == mySQLTypeNull -> "Null"
-     | ft == mySQLTypeTimestamp -> "Timestamp"
-     | ft == mySQLTypeLongLong -> "LongLong"
-     | ft == mySQLTypeInt24 -> "Int24"
-     | ft == mySQLTypeDate -> "Date"
-     | ft == mySQLTypeTime -> "Time"
-     | ft == mySQLTypeDateTime -> "DateTime"
-     | ft == mySQLTypeYear -> "Year"
-     | ft == mySQLTypeNewDate -> "NewDate"
-     | ft == mySQLTypeVarChar -> "VarChar"
-     | ft == mySQLTypeBit -> "Bit"
-     | ft == mySQLTypeTimestamp2 -> "Timestamp2"
-     | ft == mySQLTypeDateTime2 -> "DateTime2"
-     | ft == mySQLTypeTime2 -> "Time2"
-     | ft == mySQLTypeNewDecimal -> "NewDecimal"
-     | ft == mySQLTypeEnum -> "Enum"
-     | ft == mySQLTypeSet -> "Set"
-     | ft == mySQLTypeTinyBlob -> "TinyBlob"
-     | ft == mySQLTypeMediumBlob -> "MediumBlob"
-     | ft == mySQLTypeLongBlob -> "LongBlob"
-     | ft == mySQLTypeBlob -> "Blob"
-     | ft == mySQLTypeVarString -> "VarString"
-     | ft == mySQLTypeString -> "String"
-     | otherwise -> "Geometry" -- brittle, to fix
+packIntLike :: (Integral a, Bits a) => MySQLValue -> Maybe a
+packIntLike = \case
+  MySQLInt32 v -> intCastMaybe v
+  MySQLInt64 v -> intCastMaybe v
+  _ -> Nothing
+
+packUIntLike :: (Integral a, Bits a) => MySQLValue -> Maybe a
+packUIntLike = \case
+  MySQLInt32U v -> intCastMaybe v
+  MySQLInt64U v -> intCastMaybe v
+  _ -> Nothing
+
+-- Generalized packing helper
+tryPack :: (MonadThrow m) => (MySQLValue -> Maybe a) -> MySQLFieldDecode m a
+tryPack packer = do
+  (_, _, v) <- ask
+  case packer v of
+    Nothing -> throw ValueWon'tFit
+    Just v' -> pure v'
+
+extractJSON :: MySQLValue -> Maybe ByteString
+extractJSON = \case
+  MySQLText v' -> Just . encodeUtf8 $ v'
+  MySQLBytes v' -> Just v'
+  _ -> Nothing
+
+tryParseJSON :: (MonadThrow m) =>
+  (MySQLValue -> Maybe ByteString) -> MySQLFieldDecode m Value
+tryParseJSON extractor = do
+  (_, _, v) <- ask
+  case eitherDecodeStrict <$> extractor v of
+    Nothing         -> throw TypeMismatch
+    Just (Left err) -> throw . JSONParseFailed . pack $ err
+    Just (Right v') -> pure v'
