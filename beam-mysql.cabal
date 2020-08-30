@@ -63,9 +63,10 @@ common common-bench
 
 library
   import:          common-lang
-  exposed-modules:
-    Database.Beam.MySQL
+  exposed-modules: Database.Beam.MySQL
+  other-modules:
     Database.Beam.MySQL.Connection
+    Database.Beam.MySQL.Decode
     Database.Beam.MySQL.FromField
     Database.Beam.MySQL.Syntax
 
