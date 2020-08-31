@@ -66,7 +66,6 @@ library
   exposed-modules: Database.Beam.MySQL
   other-modules:
     Database.Beam.MySQL.Connection
-    Database.Beam.MySQL.Decode
     Database.Beam.MySQL.FromField
     Database.Beam.MySQL.Syntax
 
@@ -80,6 +79,7 @@ library
     , io-streams            ^>=1.5.1.0
     , mtl                   ^>=2.2.2
     , mysql-haskell         ^>=0.8.4.2
+    , primitive             ^>=0.7.0.1
     , safe-exceptions       ^>=0.1.7.0
     , scientific            ^>=0.3.6.2
     , text                  ^>=1.2.4.0

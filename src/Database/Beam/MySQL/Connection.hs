@@ -1,9 +1,15 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE AllowAmbiguousTypes  #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE UnboxedTuples        #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Database.Beam.MySQL.Connection (
   MySQL (..),
   MySQLM (..),
+  ColumnDecodeErrorType (..),
   ColumnDecodeError (..),
   runBeamMySQL, runBeamMySQLDebug, runInsertRowReturning
   ) where
@@ -14,9 +20,11 @@ import           Control.Exception.Safe (Exception, MonadCatch, MonadMask,
 import           Control.Monad (void)
 import           Control.Monad.Except (Except, MonadError, catchError,
                                        runExcept, throwError)
-import           Control.Monad.Free.Church (iterM)
+import           Control.Monad.Free.Church (F, iterM)
 import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.Reader (ReaderT (..), ask, asks, runReaderT)
+import           Control.Monad.Primitive (PrimMonad (PrimState))
+import           Control.Monad.Reader (MonadReader, ReaderT (..), ask, asks,
+                                       runReaderT)
 import           Control.Monad.State.Strict (StateT, evalStateT, get, modify,
                                              put)
 import           Control.Monad.Trans (lift)
@@ -25,18 +33,22 @@ import           Data.Bifunctor (first)
 import           Data.ByteString (ByteString)
 import           Data.Foldable (fold)
 import           Data.Functor.Identity (Identity)
-import           Data.HashMap.Strict as HM
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HM
 import           Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import           Data.Int (Int16, Int32, Int64, Int8)
 import           Data.Kind (Type)
 import           Data.List (intersperse)
+import           Data.Primitive.MutVar (MutVar, modifyMutVar, newMutVar,
+                                        readMutVar, writeMutVar)
+import           Data.Proxy (Proxy (Proxy))
 import           Data.Scientific (Scientific)
-import           Data.Text (Text)
+import           Data.Text (Text, pack)
 import           Data.Text.Lazy (fromStrict)
 import           Data.Text.Lazy.Encoding (encodeUtf8)
 import           Data.Time (Day, LocalTime, NominalDiffTime, TimeOfDay)
-import           Data.Vector (Vector)
+import           Data.Vector (Vector, (!), (!?))
 import qualified Data.Vector as V
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.Beam.Backend (BeamBackend (..), BeamRowReadError (..),
@@ -46,7 +58,8 @@ import           Database.Beam.Backend (BeamBackend (..), BeamRowReadError (..),
                                         FromBackendRowM (..), MonadBeam (..),
                                         insertCmd)
 import           Database.Beam.Backend.SQL (BeamSqlBackendIsString, SqlNull)
-import           Database.Beam.MySQL.FromField (FromField (..))
+import           Database.Beam.MySQL.FromField (FromField (..), tryDecodeField)
+import qualified Database.Beam.MySQL.FromField as FromField
 import           Database.Beam.MySQL.Syntax (MysqlInsertSyntax (..),
                                              MysqlInsertValuesSyntax (..),
                                              MysqlSyntax (..),
@@ -66,6 +79,7 @@ import           Prelude hiding (mapM, read)
 import           System.IO.Streams (InputStream, peek, read)
 import           System.IO.Streams.Combinators (foldM, mapM)
 import qualified System.IO.Streams.List as S
+import           Type.Reflection (Typeable, tyConName, typeRep, typeRepTyCon)
 
 data MySQL = MySQL
 
@@ -218,9 +232,35 @@ instance HasSqlEqualityCheck MySQL Value
 instance HasSqlQuantifiedEqualityCheck MySQL Value
 
 -- A more useful error context for beam decoding errors
+data ColumnDecodeErrorType =
+  UnexpectedNull {
+    expectedType :: {-# UNPACK #-} !Text,
+    sqlType      :: {-# UNPACK #-} !Text
+    } |
+  TypeMismatch {
+    expectedType :: {-# UNPACK #-} !Text,
+    sqlType      :: {-# UNPACK #-} !Text,
+    value        :: {-# UNPACK #-} !Text
+    } |
+  ValueWon'tFit {
+    expectedType :: {-# UNPACK #-} !Text,
+    sqlType      :: {-# UNPACK #-} !Text,
+    value        :: {-# UNPACK #-} !Text
+    } |
+  JSONParseFailed {
+    parseError :: {-# UNPACK #-} !Text,
+    sqlType    :: {-# UNPACK #-} !Text,
+    value      :: {-# UNPACK #-} !Text
+    } |
+  NotEnoughColumns {
+    expectedColumns :: {-# UNPACK #-} !Int,
+    actualColumns   :: {-# UNPACK #-} !Int
+    }
+    deriving stock (Eq, Show)
+
 data ColumnDecodeError = ColumnDecodeError {
   tableNames :: !(HashSet Text),
-  errorType  :: {-# UNPACK #-} !BeamRowReadError
+  errorType  :: !ColumnDecodeErrorType
   }
   deriving stock (Eq, Show)
 
@@ -381,7 +421,7 @@ runInsertRowReturning = \case
                 drainStream
                 (liftIO . \(_, stream) -> do
                     res <- read stream
-                    case (V.!? 0) =<< res of
+                    case (!? 0) =<< res of
                       Just (MySQLText autoincCol) -> pure . Just $ autoincCol
                       _                           -> pure Nothing)
       insertReturningWithoutAutoinc ::
@@ -421,6 +461,84 @@ acquireStream conn = fmap (first (V.map columnType)) . liftIO . queryVector_ con
 drainStream :: (MonadIO m) => (a, InputStream b) -> m ()
 drainStream (_, stream) = liftIO . skipToEof $ stream
 
+-- Decoding is complex enough to warrant its own operations, and an explicit
+-- stack
+
+data DecodeEnv (m :: Type -> Type) = DecodeEnv {
+  tablesUsed   :: !(HashSet Text),
+  fieldTypes   :: {-# UNPACK #-} !(Vector FieldType),
+  values       :: {-# UNPACK #-} !(Vector MySQLValue),
+  currentIndex :: {-# UNPACK #-} !(MutVar (PrimState m) Int)
+  }
+
+startingEnv ::
+  HashSet Text -> Vector FieldType -> Vector MySQLValue -> m (DecodeEnv m)
+startingEnv ts fts vs = DecodeEnv ts fts vs <$> newMutVar 0
+
+newtype Decode (m :: Type -> Type) (a :: Type) =
+  Decode (ReaderT (DecodeEnv m) m a)
+  deriving newtype (Functor,
+                    Applicative,
+                    Monad,
+                    MonadReader (DecodeEnv m),
+                    MonadThrow,
+                    PrimMonad)
+
+advanceIndex :: (PrimMonad m) => Decode m ()
+advanceIndex = do
+  ix <- asks currentIndex
+  modifyMutVar ix succ
+
+currentField :: (PrimMonad m) => Decode m (Maybe (Int, FieldType, MySQLValue))
+currentField = do
+  env <- ask
+  ix <- readMutVar . currentIndex $ env
+  pure ((ix,,) <$> fieldTypes env !? ix <*> values env !? ix)
+
+decodeFromRow :: forall (a :: Type) (m :: Type -> Type) .
+  (FromBackendRow MySQL a, MonadThrow m, PrimMonad m) =>
+  Decode m a
+decodeFromRow = iterM go churched
+  where
+    needed :: Int
+    needed = valuesNeeded Proxy (Proxy @a)
+    churched :: F (FromBackendRowF MySQL) a
+    go :: forall (b :: Type) . FromBackendRowF MySQL (Decode m b) -> Decode m b
+    go = \case
+      ParseOneField callback -> do
+        curr <- currentField
+        case curr of
+          Nothing          -> do
+            ts <- asks tablesUsed
+            ix <- asks currentIndex >>= readMutVar
+            throw . ColumnDecodeError ts . NotEnoughColumns needed $ ix + 1
+          Just (ix, ft, v) -> case tryDecodeField fromField v of
+            Left err  -> do
+              ts <- asks tablesUsed
+              throw . ColumnDecodeError ts $ case err of
+                FromField.UnexpectedNull    ->
+                  UnexpectedNull (typeName @b) (sqlTypeToText ft)
+                FromField.TypeMismatch      ->
+                  TypeMismatch (typeName @b) (sqlTypeToText ft) (pack . show $ v)
+                FromField.ValueWon'tFit     ->
+                  ValueWon'tFit (typeName @b) (sqlTypeToText ft) (pack . show $ v)
+                FromField.JSONParseFailed e ->
+                  JSONParseFailed e (sqlTypeToText ft) (pack . show $ v)
+            Right val -> advanceIndex >> callback val
+      Alt (FromBackendRowM opt1) (FromBackendRowM opt2) callback -> do
+        ix <- asks currentIndex >>= readMutVar -- capture index
+        catchError (callback =<< iterM go opt1)
+                   (\err -> do
+                      asks currentIndex >>= (`writeMutVar` ix) -- restore
+                      catchError (callback =<< iterM go opt2)
+                                 _)
+      FailParseWith err -> _
+    FromBackendRowM churched = fromBackendRow
+
+typeName :: forall (a :: Type) . (Typeable a) => Text
+typeName = pack . tyConName . typeRepTyCon $ (typeRep @a)
+
+{-
 -- Decoding from a row is complex enough to warrant its own operators and an
 -- explicit stack.
 newtype Decode a =
@@ -485,3 +603,4 @@ decodeFromRow fieldTypes values = case runDecode (iterM go churched) fieldTypes 
 -- (namely, tables involved).
 rethrowBeamRowError :: HashSet Text -> BeamRowReadError -> MySQLM a
 rethrowBeamRowError tables = throw . ColumnDecodeError tables
+-}

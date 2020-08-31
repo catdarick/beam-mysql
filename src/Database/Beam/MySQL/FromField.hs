@@ -7,10 +7,12 @@ module Database.Beam.MySQL.FromField
 (
   DecodeErrorTag (..),
   MySQLFieldDecode,
+  tryDecodeField,
   FromField (..)
 ) where
 
-import           Control.Monad.Except (Except, MonadError (throwError))
+import           Control.Monad.Except (Except, MonadError (throwError),
+                                       runExcept)
 import           Control.Monad.Reader (ReaderT (ReaderT))
 import           Data.Aeson (Value, eitherDecodeStrict)
 import           Data.Bits (Bits (zeroBits))
@@ -38,6 +40,9 @@ newtype MySQLFieldDecode (a :: Type) =
   MySQLFieldDecode (MySQLValue -> Except DecodeErrorTag a)
   deriving (Functor, Applicative, Monad)
     via (ReaderT MySQLValue (Except DecodeErrorTag))
+
+tryDecodeField :: MySQLFieldDecode a -> MySQLValue -> Either DecodeErrorTag a
+tryDecodeField (MySQLFieldDecode f) = runExcept . f
 
 class FromField (a :: Type) where
   fromField :: MySQLFieldDecode a
