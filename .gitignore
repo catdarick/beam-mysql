@@ -18,3 +18,5 @@ graveyard
 site
 TAGS
 .vscode
+.nvimrc
+stack.yaml.lock

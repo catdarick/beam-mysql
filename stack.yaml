@@ -1,6 +1,9 @@
 resolver: lts-15.15
 extra-deps:
-  - ../beam/beam-core
+ - git: https://github.com/juspay/beam
+   commit: f6a35d5361e96c766ae977e9a07fa40c6622808e
+   subdirs:
+     - beam-core 
 
 # Problem: MacOS build failure
 # >   Configuring mysql-0.1.7...
