@@ -3,8 +3,7 @@ extra-deps:
  - git: https://github.com/juspay/beam
    commit: f6a35d5361e96c766ae977e9a07fa40c6622808e
    subdirs:
-     - beam-core 
-
+     - beam-core
 # Problem: MacOS build failure
 # >   Configuring mysql-0.1.7...
 # >   setup: Missing dependencies on foreign libraries:

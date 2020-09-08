@@ -17,7 +17,8 @@ import Database.Beam (Table (PrimaryKey, primaryKey), Columnar, Beamable,
                       TableEntity, Database, DatabaseSettings,
                       defaultDbSettings)
 import Database.Beam.MySQL.Syntax (fromMysqlCommand, unwrapInnerBuilder,
-                                   MysqlCommandSyntax)
+                                   MysqlCommandSyntax,
+                                   MysqlSyntax (MysqlSyntax))
 import Database.Beam.Backend.SQL (insertCmd, selectCmd, updateCmd, deleteCmd)
 import Database.Beam.Query (SqlInsert (SqlInsertNoRows, SqlInsert), 
                             SqlSelect (SqlSelect), QExpr, QBaseScope, 
@@ -31,14 +32,69 @@ import Data.Text (Text)
 import Database.Beam.MySQL (MySQL)
 import Data.Vector (Vector, fromList)
 import Data.Foldable (traverse_)
-import Test.Hspec (hspec, Spec, describe, it, shouldBe)
+import Test.Hspec (hspec, Spec, describe, it, shouldBe, beforeAll,
+                   shouldReturn)
 import Fmt ((+|), (|+))
+import Database.MySQL.Temp (withTempDB, toConnectInfo)
+import Control.Exception.Safe (bracket)
+import Database.MySQL.Base (connect, close, Connection, escape, query)
 
 main :: IO ()
-main = hspec . traverse_ (uncurry escapingSpec) $ escapeSequences
+main = withTempDB (\db -> do
+  let info = toConnectInfo db
+  bracket (connect info) 
+           close 
+           (\conn -> do
+              -- query conn "create database test;"
+              -- query conn "use test"
+              hspec $ do
+                bobbyTablesSpec conn))
+              -- traverse_ (uncurry (escapingSpec conn')) escapeSequences))
 
 -- Helpers
 
+bobbyTablesSpec :: Connection -> Spec
+bobbyTablesSpec conn = beforeAll (dumpInsertSQL conn bobbyTablesInsert) $ do
+  describe "SQL injections" $ do
+    it "should quote string literals to avoid SQL injection" $ \sql -> do
+      sql `shouldBe` Just "foo"
+
+bobbyTablesInsert :: SqlInsert MySQL TestT
+bobbyTablesInsert = insert (_testTestTable testDB) . insertValues $ [
+  TestT "Robert'); DROP TABLE Students;--"
+  ]
+
+dumpInsertSQL :: Connection -> SqlInsert MySQL TestT -> IO (Maybe Text)
+dumpInsertSQL conn = \case
+  SqlInsertNoRows -> pure Nothing
+  SqlInsert _ ins -> Just <$> (render conn . insertCmd $ ins) 
+
+render :: Connection -> MysqlCommandSyntax -> IO Text
+render conn command = do
+  let MysqlSyntax cmd = fromMysqlCommand command
+  cmdBuilder <- cmd (\_ b _ -> pure b) (escape conn) mempty conn
+  pure . toStrict . decodeUtf8 . toLazyByteString $ cmdBuilder
+
+{-
+bobbyTablesSpec :: Connection -> Spec
+bobbyTablesSpec conn = describe "SQL injections" $ do
+  it "should quote string literals to avoid SQL injection" $
+    dumpInsertSQL conn bobbyTablesInsert `shouldBe` Just "foo"
+
+render :: Connection -> MysqlCommandSyntax -> Text
+render conn command = case fromMysqlCommand command of
+  MysqlSyntax cmd -> let cmdBuilder = cmd (\_ b _ -> pure b) (escape conn) mempty conn in
+                        _
+
+render = toStrict . decodeUtf8 . toLazyByteString . unwrapInnerBuilder . fromMysqlCommand
+
+dumpInsertSQL :: Connection -> SqlInsert MySQL TestT -> Maybe Text
+dumpInsertSQL conn = \case
+  SqlInsertNoRows -> Nothing
+  SqlInsert _ ins -> Just . render conn . insertCmd $ ins
+-}
+
+{-
 escapeSequences :: Vector (Text, Text)
 escapeSequences = fromList [
     ("\'", "\'") -- A single quote (“'”) character
@@ -65,14 +121,6 @@ escapingSpec repr escapeSeq = do
     it "should be escaped in DELETE WHERE literals" $
       dumpDeleteSQL (deleteWhereStmt escapeSeq) `shouldBe`
         ("DELETE FROM `test_table` WHERE (`text`) = ('foo\\" +| repr |+ "')")
-
-render :: MysqlCommandSyntax -> Text
-render = toStrict . decodeUtf8 . toLazyByteString . unwrapInnerBuilder . fromMysqlCommand
-
-dumpInsertSQL :: SqlInsert MySQL TestT -> Maybe Text
-dumpInsertSQL = \case
-  SqlInsertNoRows -> Nothing
-  SqlInsert _ ins -> Just . render. insertCmd $ ins
 
 dumpSelectSQL :: SqlSelect MySQL (TestT Identity) -> Text
 dumpSelectSQL (SqlSelect sel) = render . selectCmd $ sel
@@ -111,6 +159,7 @@ deleteWhereStmt escapeSeq = delete (_testTestTable testDB) go
     go :: (forall s' . TestT (QExpr MySQL s')) -> QExpr MySQL s Bool
     go row = _testText row ==. val_ ("foo" +| escapeSeq |+ "")
 
+-}
 newtype TestT (f :: Type -> Type) = TestT
   {
     _testText :: Columnar f Text
@@ -133,4 +182,4 @@ newtype TestDB (f :: Type -> Type) = TestDB
   deriving anyclass (Database MySQL)
 
 testDB :: DatabaseSettings MySQL TestDB
-testDB = defaultDbSettings
+testDB = defaultDbSettings 
