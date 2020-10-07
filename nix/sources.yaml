@@ -1,0 +1,6 @@
+euler-build:
+  branch: wip
+  revision: 7f56d07baf464015f0888d50b7ab4771aeb033b0
+beam:
+  branch: build-wip
+  revision: 5a2012c842c9d3070fb5654b9d83f3722ad339d3
