@@ -4,7 +4,7 @@
 
   inputs = {
 
-    # euler-build.inputs.beam.follows = "beam";
+    euler-build.inputs.beam.follows = "beam";
     beam.inputs.euler-build.follows = "euler-build";
   };
 

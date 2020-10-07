@@ -1,6 +1,6 @@
 euler-build:
   branch: wip
-  revision: 7f56d07baf464015f0888d50b7ab4771aeb033b0
+  revision: d0af61849ddd096cb31cee881331efc638cc0b25
 beam:
   branch: build-wip
   revision: 5a2012c842c9d3070fb5654b9d83f3722ad339d3

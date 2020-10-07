@@ -20,7 +20,7 @@ let
 
   mysql-haskell-path = mysql-haskell-repo;
 
-  beam-mysql-path = ./.;
+  beam-mysql-path = ../.;
 in
 super.eulerBuild.mkEulerHaskellOverlay self super
   (hself: hsuper:
