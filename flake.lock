@@ -2,22 +2,21 @@
   "nodes": {
     "beam": {
       "inputs": {
-        "euler-build": "euler-build",
-        "flake-utils": "flake-utils_2"
+        "euler-build": [
+          "euler-build"
+        ]
       },
       "locked": {
-        "lastModified": 1601059477,
-        "narHash": "sha256-1KoPfpKgYwrRSgsmmtHylrc/3oYq46y99Qk5U+mo21I=",
+        "lastModified": 1602107845,
+        "narHash": "sha256-mWn5T32gzzsyVqHArMBfwhZ6zFSGDWmEDbOvxrrVlkE=",
         "owner": "juspay",
         "repo": "beam",
-        "rev": "e3ede390ccee5efe4cfb5c9c4b74f720e339bdc4",
+        "rev": "5a2012c842c9d3070fb5654b9d83f3722ad339d3",
         "type": "github"
       },
       "original": {
-        "owner": "juspay",
-        "ref": "build-wip",
-        "repo": "beam",
-        "type": "github"
+        "id": "beam",
+        "type": "indirect"
       }
     },
     "euler-build": {
@@ -27,87 +26,20 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1601049802,
-        "narHash": "sha256-jn9ZiW98fQsI7Cs2kVHJcCck0XozY1BIGETYSDl0Ajg=",
+        "lastModified": 1602098089,
+        "narHash": "sha256-a5Y8CfklG7ag+5Ip0H/gnM56wlX5wxayyct9I6xHUkM=",
         "ref": "wip",
-        "rev": "fe18864ad64e0b3d3848c6b337f5bec1f1d52753",
-        "revCount": 2,
+        "rev": "7f56d07baf464015f0888d50b7ab4771aeb033b0",
+        "revCount": 12,
         "type": "git",
         "url": "ssh://git@bitbucket.com/juspay/euler-build"
       },
       "original": {
         "id": "euler-build",
-        "ref": "wip",
-        "type": "indirect"
-      }
-    },
-    "euler-build_2": {
-      "inputs": {
-        "flake-utils": "flake-utils_3",
-        "nix-inclusive": "nix-inclusive_2",
-        "nixpkgs": "nixpkgs_2"
-      },
-      "locked": {
-        "lastModified": 1601049802,
-        "narHash": "sha256-jn9ZiW98fQsI7Cs2kVHJcCck0XozY1BIGETYSDl0Ajg=",
-        "ref": "wip",
-        "rev": "fe18864ad64e0b3d3848c6b337f5bec1f1d52753",
-        "revCount": 2,
-        "type": "git",
-        "url": "ssh://git@bitbucket.com/juspay/euler-build"
-      },
-      "original": {
-        "id": "euler-build",
-        "ref": "wip",
         "type": "indirect"
       }
     },
     "flake-utils": {
-      "locked": {
-        "lastModified": 1600209923,
-        "narHash": "sha256-zoOWauTliFEjI++esk6Jzk7QO5EKpddWXQm9yQK24iM=",
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "3cd06d3c1df6879c9e41cb2c33113df10566c760",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "type": "github"
-      }
-    },
-    "flake-utils_2": {
-      "locked": {
-        "lastModified": 1600209923,
-        "narHash": "sha256-zoOWauTliFEjI++esk6Jzk7QO5EKpddWXQm9yQK24iM=",
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "3cd06d3c1df6879c9e41cb2c33113df10566c760",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "type": "github"
-      }
-    },
-    "flake-utils_3": {
-      "locked": {
-        "lastModified": 1600209923,
-        "narHash": "sha256-zoOWauTliFEjI++esk6Jzk7QO5EKpddWXQm9yQK24iM=",
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "3cd06d3c1df6879c9e41cb2c33113df10566c760",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "type": "github"
-      }
-    },
-    "flake-utils_4": {
       "locked": {
         "lastModified": 1600209923,
         "narHash": "sha256-zoOWauTliFEjI++esk6Jzk7QO5EKpddWXQm9yQK24iM=",
@@ -141,42 +73,7 @@
         "type": "github"
       }
     },
-    "nix-inclusive_2": {
-      "inputs": {
-        "stdlib": "stdlib_2"
-      },
-      "locked": {
-        "lastModified": 1592950149,
-        "narHash": "sha256-tZSz9/WkOrtNbW7U2re4WoFPQ2tQX0I0GpCeoF3fY1M=",
-        "owner": "manveru",
-        "repo": "nix-inclusive",
-        "rev": "dd80ddcc6850d130b591fbc9b0aacacfbb3cf47c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "manveru",
-        "repo": "nix-inclusive",
-        "rev": "dd80ddcc6850d130b591fbc9b0aacacfbb3cf47c",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
-      "locked": {
-        "lastModified": 1589844680,
-        "narHash": "sha256-I4OYatIJsEZvEUkAGdTlJjAuUuAq7A1GA/kepUQic1o=",
-        "owner": "NixOS",
-        "repo": "nixpkgs-channels",
-        "rev": "0f5ce2fac0c726036ca69a5524c59a49e2973dd4",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "repo": "nixpkgs-channels",
-        "rev": "0f5ce2fac0c726036ca69a5524c59a49e2973dd4",
-        "type": "github"
-      }
-    },
-    "nixpkgs_2": {
       "locked": {
         "lastModified": 1589844680,
         "narHash": "sha256-I4OYatIJsEZvEUkAGdTlJjAuUuAq7A1GA/kepUQic1o=",
@@ -195,26 +92,10 @@
     "root": {
       "inputs": {
         "beam": "beam",
-        "euler-build": "euler-build_2",
-        "flake-utils": "flake-utils_4"
+        "euler-build": "euler-build"
       }
     },
     "stdlib": {
-      "locked": {
-        "lastModified": 1590026685,
-        "narHash": "sha256-E5INrVvYX/P/UpcoUFDAsuHem+lsqT+/teBs9O7oc9Q=",
-        "owner": "manveru",
-        "repo": "nix-lib",
-        "rev": "99088cf7febcdb21afd375a335dcafa959bef3ed",
-        "type": "github"
-      },
-      "original": {
-        "owner": "manveru",
-        "repo": "nix-lib",
-        "type": "github"
-      }
-    },
-    "stdlib_2": {
       "locked": {
         "lastModified": 1590026685,
         "narHash": "sha256-E5INrVvYX/P/UpcoUFDAsuHem+lsqT+/teBs9O7oc9Q=",
